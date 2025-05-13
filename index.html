@@ -70,17 +70,15 @@
         color: #eee;
         padding: 10px;
       }
-
-      #output{
+      #output {
         height: 500px;
-        overflow-y:scroll;
+        overflow-y: scroll;
       }
     </style>
   </head>
   <body>
     <h1>Assembly Interpreter</h1>
-    <textarea id="code"></textarea>
-    <br />
+    <textarea id="code"></textarea><br />
     <button onclick="runCode()">Run</button>
     <button onclick="stepCode()">Step</button>
     <button onclick="resetCode()">Reset</button>
@@ -140,12 +138,8 @@
       let keyBuffer = [];
       const canvas = document.getElementById("screen");
       const ctx = canvas.getContext("2d");
-      // focus & listen for keys
       canvas.focus();
-      canvas.addEventListener("keydown", (e) => {
-        keyBuffer.push(e.keyCode);
-      });
-      // drawing
+      canvas.addEventListener("keydown", (e) => keyBuffer.push(e.keyCode));
       function clearScreen() {
         ctx.fillStyle = "#000";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -155,53 +149,34 @@
         ctx.fillStyle = color;
         ctx.fillRect(x, y, 1, 1);
       }
-      // parser
       function parseLine(line) {
         if (!line || typeof line !== "string") return [];
-        line = line.split(";")[0].trim(); // Remove comment
-        if (!line) return []; // Entire line was a comment
+        line = line.split(";")[0].trim();
+        if (!line) return [];
         return line.split(/[\s,]+/);
       }
-
-      function scanLabels() {
-        labels = {};
-        lines.forEach((l, i) => {
-          let m = l.match(/^([A-Za-z_]\w*):$/);
-          if (m) labels[m[1]] = i + 1; // point to next line (actual instruction)
-        });
-      }
-
       function resetCode() {
-        registers = { A: 0, B: 0, C: 0, D: 0, X: 0, Y: 0, PC: 0, FLAGS: 0 };
+        registers = {PC: 0, FLAGS: 0 };
         memory = new Array(256).fill(0);
         stack = [];
         halted = false;
         running = false;
-
         let rawLines = editor
           .getValue()
           .split("\n")
           .map((l) => l.trim());
-
-        // Label scanning before removing them
         labels = {};
         let actualLines = [];
-        rawLines.forEach((line, index) => {
-          let labelMatch = line.match(/^([A-Za-z_]\w*):$/);
-          if (labelMatch) {
-            labels[labelMatch[1].toUpperCase()] = actualLines.length;
-          } else if (line && !line.startsWith(";")) {
-            actualLines.push(line);
-          }
+        rawLines.forEach((line) => {
+          let m = line.match(/^([A-Za-z_]\w*):$/);
+          if (m) labels[m[1].toUpperCase()] = actualLines.length;
+          else if (line && !line.startsWith(";")) actualLines.push(line);
         });
-
         lines = actualLines;
-
         output.textContent = "";
         updateDisplay();
         clearScreen();
       }
-
       function runCode() {
         resetCode();
         running = true;
@@ -217,7 +192,7 @@
           return false;
         }
         let line = lines[registers.PC];
-        if (/^[A-Za-z_]\w*:$/.test(line)) {
+        if (/^[A-Za-z_]\w*:/.test(line)) {
           registers.PC++;
           return true;
         }
@@ -246,62 +221,51 @@
             case "POP":
               registers[arg1] = stack.pop() || 0;
               break;
-            case "LOAD":
-              registers[arg1] = memory[+arg2];
+            case "STORE": {
+              const address = isNaN(arg1) ? registers[arg1] : +arg1;
+              const value = isNaN(arg2) ? registers[arg2] : +arg2;
+              if (address < 0 || address >= memory.length)
+                throw `Invalid memory address: ${address}`;
+              memory[address] = value;
               break;
-            case "STORE":
-              memory[+arg1] = registers[arg2];
+            }
+            case "LOAD": {
+              const address = isNaN(arg2) ? registers[arg2] : +arg2;
+              if (!(arg1 in registers))
+                throw `LOAD destination must be a register. Got: ${arg1}`;
+              if (address < 0 || address >= memory.length)
+                throw `Invalid memory address: ${address}`;
+              registers[arg1] = memory[address];
               break;
+            }
             case "JMP":
-              const jumpTarget = labels[arg1];
-              if (jumpTarget !== undefined) {
-                registers.PC = jumpTarget; // Jump to the label's address
-              } else {
-                // If the label doesn't exist, try using the argument as a number
-                const jumpAddress = +arg1;
-                if (!isNaN(jumpAddress)) {
-                  registers.PC = jumpAddress; // Jump to the numeric address
-                } else {
-                  throw `Unknown label or invalid address: ${arg1}`;
-                }
-              }
+              const jt = labels[arg1] ?? +arg1;
+              if (jt == null || isNaN(jt)) throw `Unknown label: ${arg1}`;
+              registers.PC = jt;
               return true;
-            case "CMP":
-              registers.FLAGS =
-                (registers[arg1] || 0) == (registers[arg2] || 0) ? 0 : 1;
-              break;
             case "JZ":
               if (registers.FLAGS === 0) {
-                const jumpTarget = labels[arg1];
-                if (jumpTarget !== undefined) {
-                  registers.PC = jumpTarget; // Jump to the label's address
-                } else {
-                  const jumpAddress = +arg1;
-                  if (!isNaN(jumpAddress)) {
-                    registers.PC = jumpAddress; // Jump to the numeric address
-                  } else {
-                    throw `Unknown label or invalid address: ${arg1}`;
-                  }
-                }
+                const jz = labels[arg1] ?? +arg1;
+                if (jz == null || isNaN(jz)) throw `Unknown: ${arg1}`;
+                registers.PC = jz;
                 return true;
               }
               break;
+            case "CMP": {
+              const val1 = isNaN(arg1) ? registers[arg1] : +arg1;
+              const val2 = isNaN(arg2) ? registers[arg2] : +arg2;
+              registers.FLAGS = val1 === val2 ? 0 : 1;
+              break;
+            }
             case "JNZ":
               if (registers.FLAGS !== 0) {
-                const jumpTarget = labels[arg1];
-                if (jumpTarget !== undefined) {
-                  registers.PC = jumpTarget; // Jump to the label's address
-                } else {
-                  const jumpAddress = +arg1;
-                  if (!isNaN(jumpAddress)) {
-                    registers.PC = jumpAddress; // Jump to the numeric address
-                  } else {
-                    throw `Unknown label or invalid address: ${arg1}`;
-                  }
-                }
+                const target = labels[arg1] ?? +arg1;
+                if (isNaN(target)) throw `Unknown jump target: ${arg1}`;
+                registers.PC = target;
                 return true;
               }
               break;
+
             case "PRINT":
               output.textContent += `=${
                 isNaN(arg1) ? registers[arg1] : +arg1
@@ -318,11 +282,10 @@
               {
                 const x = isNaN(arg1) ? registers[arg1] : +arg1;
                 const y = isNaN(arg2) ? registers[arg2] : +arg2;
-                const color = parseLine(line)[3] || "#fff"; // Optional 3rd argument
+                const color = parseLine(line)[3] || "#fff";
                 drawPixel(x, y, color);
               }
               break;
-
             case "CLS":
               clearScreen();
               break;
@@ -331,7 +294,7 @@
               running = false;
               break;
             default:
-              throw `Unknown: ${instr}`;
+              throw `Unknown instr: ${instr}`;
           }
         } catch (e) {
           output.textContent += `Error: ${e}\n`;
@@ -341,15 +304,11 @@
         updateDisplay();
         return true;
       }
-
       function updateDisplay() {
-        // registers
         let rt = "";
-        for (let r in registers) {
+        for (let r in registers)
           rt += `<tr><td>${r}</td><td>${registers[r]}</td></tr>`;
-        }
         registerTable.innerHTML = rt;
-        // memory
         let mt = "";
         for (let i = 0; i < 16; i++) {
           mt += "<tr>";
@@ -360,7 +319,6 @@
           mt += "</tr>";
         }
         memoryTable.innerHTML = mt;
-        // stack
         let st = "";
         if (!stack.length) st = '<tr><td colspan="2"><i>Empty</i></td></tr>';
         else
@@ -396,39 +354,36 @@
         cm.setGutterMarker(
           n,
           "breakpoints",
-          info.gutterMarkers ? null : makeMarker()
+          info.gutterMarkers
+            ? null
+            : (() => (
+                (m = document.createElement("div")), (m.innerHTML = "●"), m
+              ))()
         );
         if (breakpoints.has(n)) breakpoints.delete(n);
         else breakpoints.add(n);
       });
-      function makeMarker() {
-        let m = document.createElement("div");
-        m.innerHTML = "●";
-        return m;
-      }
-      // dictionary
       const instructionDescriptions = {
-        MOV: "MOV A, B – Move value from B (register or number) to A.",
-        ADD: "ADD A, B – Add value of B to A.",
+        MOV: "MOV A, B – Move value from B to A.",
+        ADD: "ADD A, B – Add B to A.",
         SUB: "SUB A, B – Subtract B from A.",
-        INC: "INC A – Increment A by 1.",
-        DEC: "DEC A – Decrement A by 1.",
-        PUSH: "PUSH A – Push value of A to stack.",
-        POP: "POP A – Pop value from stack into A.",
-        LOAD: "LOAD A, 10 – Load from memory[10] into A.",
-        STORE: "STORE 10, A – Store A into memory[10].",
-        CMP: "CMP A, B – Set FLAGS to 0 if A == B, else 1.",
-        JZ: "JZ LABEL – Jump to LABEL if FLAGS == 0.",
-        JNZ: "JNZ LABEL – Jump to LABEL if FLAGS != 0.",
+        INC: "INC A – A = A + 1.",
+        DEC: "DEC A – A = A - 1.",
+        PUSH: "PUSH A – Push A onto stack.",
+        POP: "POP A – Pop stack into A.",
+        LOAD: "LOAD A, 10 – A = memory[10].",
+        STORE: "STORE 10, A – memory[10] = A.",
+        CMP: "CMP A, B – FLAGS=0 if A==B else 1.",
+        JZ: "JZ LABEL – Jump if FLAGS==0.",
+        JNZ: "JNZ LABEL – Jump if FLAGS!=0.",
         JMP: "JMP LABEL – Unconditional jump.",
-        PRINT: "PRINT A – Print value of A.",
-        IN: "IN A – Prompt user for input and store in A.",
-        KEY: "KEY A – Read next key code (or 0 if none) into A.",
-        PIX: "PIX X, Y, #color – Draw a pixel at (X,Y). Default color is white.",
-        CLS: "CLS – Clear the canvas screen.",
-        HLT: "HLT – Halt the program.",
+        PRINT: "PRINT A – Print A.",
+        IN: "IN A – Prompt and store input in A.",
+        KEY: "KEY A – Read next key code into A.",
+        PIX: "PIX X, Y, #color – Draw a pixel.",
+        CLS: "CLS – Clear screen.",
+        HLT: "HLT – Halt execution.",
       };
-
       function renderDictionary() {
         dictionary.innerHTML = "";
         for (let k in instructionDescriptions) {
