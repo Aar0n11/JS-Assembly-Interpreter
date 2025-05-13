@@ -129,7 +129,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/assembly_x86/assembly_x86.min.js"></script>
     <script>
-      let baselineMemory = null; // ← holds the original .mem snapshot
+      let baselineMemory = null;
       let registers = {},
         memory = [],
         stack = [],
@@ -165,10 +165,8 @@
       function resetCode() {
         registers = { PC: 0, FLAGS: 0 };
         if (baselineMemory) {
-          // restore imported snapshot
           memory = baselineMemory.slice();
         } else {
-          // brand-new blank memory
           memory = new Array(256).fill(0);
         }
         stack = [];
@@ -209,10 +207,6 @@
           return false;
         }
         let line = lines[registers.PC];
-        if (/^[A-Za-z_]\w*:/.test(line)) {
-          registers.PC++;
-          return true;
-        }
         const [instr, arg1, arg2] = parseLine(line).map((t) => t.toUpperCase());
         output.textContent += `PC=${registers.PC}|${line}\n`;
         try {
@@ -232,6 +226,15 @@
             case "DEC":
               registers[arg1]--;
               break;
+            case "MULT":
+              registers[arg1] *= isNaN(arg2) ? registers[arg2] : +arg2;
+              break;
+            case "DIV": {
+              const divisor = isNaN(arg2) ? registers[arg2] : +arg2;
+              if (divisor === 0) throw `Divide by zero`;
+              registers[arg1] = Math.floor(registers[arg1] / divisor);
+              break;
+            }
             case "PUSH":
               stack.push(registers[arg1]);
               break;
@@ -256,15 +259,11 @@
               break;
             }
             case "JMP":
-              const jt = labels[arg1] ?? +arg1;
-              if (jt == null || isNaN(jt)) throw `Unknown label: ${arg1}`;
-              registers.PC = jt;
+              registers.PC = labels[arg1] ?? +arg1;
               return true;
             case "JZ":
               if (registers.FLAGS === 0) {
-                const jz = labels[arg1] ?? +arg1;
-                if (jz == null || isNaN(jz)) throw `Unknown: ${arg1}`;
-                registers.PC = jz;
+                registers.PC = labels[arg1] ?? +arg1;
                 return true;
               }
               break;
@@ -276,16 +275,12 @@
             }
             case "JNZ":
               if (registers.FLAGS !== 0) {
-                const target = labels[arg1] ?? +arg1;
-                if (isNaN(target)) throw `Unknown jump target: ${arg1}`;
-                registers.PC = target;
+                registers.PC = labels[arg1] ?? +arg1;
                 return true;
               }
               break;
             case "PRINT":
-              output.textContent += `=${
-                isNaN(arg1) ? registers[arg1] : +arg1
-              }\n`;
+              output.textContent += `=${isNaN(arg1) ? registers[arg1] : +arg1}\n`;
               break;
             case "IN":
               let v = prompt(`Enter ${arg1}:`);
@@ -321,42 +316,25 @@
       }
 
       function updateDisplay() {
-        // Registers (click-to-edit)
         let rt = "";
         for (let r in registers) {
-          rt += `<tr>
-            <td>${r}</td>
-            <td contenteditable="true"
-                onblur="updateRegister('${r}', this.innerText)">
-              ${registers[r]}
-            </td>
-          </tr>`;
+          rt += `<tr><td>${r}</td><td contenteditable="true" onblur="updateRegister('${r}', this.innerText)">${registers[r]}</td></tr>`;
         }
         registerTable.innerHTML = rt;
 
-        // Memory (click-to-edit)
         let mt = "";
         for (let i = 0; i < 16; i++) {
           mt += "<tr>";
           for (let j = 0; j < 16; j++) {
             let idx = i * 16 + j;
-            mt += `<td contenteditable="true"
-                       onblur="updateMemory(${idx}, this.innerText)">
-                     ${memory[idx]}
-                   </td>`;
+            mt += `<td contenteditable="true" onblur="updateMemory(${idx}, this.innerText)">${memory[idx]}</td>`;
           }
           mt += "</tr>";
         }
         memoryTable.innerHTML = mt;
 
-        // Stack
         let st = "";
-        if (!stack.length) st = '<tr><td colspan="2"><i>Empty</i></td></tr>';
-        else
-          stack
-            .slice()
-            .reverse()
-            .forEach((v, i) => (st += `<tr><td>${i}</td><td>${v}</td></tr>`));
+        if (!stack.length) st = '<tr><td colspan="2"><i>Empty</i></td></tr>'; else stack.slice().reverse().forEach((v,i)=>(st+=`<tr><td>${i}</td><td>${v}</td></tr>`));
         stackTable.innerHTML = st;
       }
 
@@ -371,36 +349,23 @@
         updateDisplay();
       }
 
-      // --- Memory Export/Import ---
       function exportMemory() {
-        const blob = new Blob([memory.join(",")], {
-          type: "text/plain",
-        });
+        const blob = new Blob([memory.join(",")], { type: "text/plain" });
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
         a.download = "memory.mem";
         a.click();
       }
-      function importMemoryClick() {
-        document.getElementById("memoryInput").click();
-      }
+      function importMemoryClick() { document.getElementById("memoryInput").click(); }
       function importMemory() {
         const file = document.getElementById("memoryInput").files[0];
         if (!file) return;
         const reader = new FileReader();
         reader.onload = (e) => {
-          const data = e.target.result
-            .trim()
-            .split(",")
-            .map((x) => parseInt(x) || 0);
-          // build a fresh 256-cell array...
+          const data = e.target.result.trim().split(",").map(x=>parseInt(x)||0);
           memory = new Array(256).fill(0);
-          for (let i = 0; i < Math.min(data.length, 256); i++) {
-            memory[i] = data[i];
-          }
-          // **store** this as our baseline
-          baselineMemory = memory.slice();
-          updateDisplay();
+          for(let i=0;i<Math.min(data.length,256);i++) memory[i]=data[i];
+          baselineMemory = memory.slice(); updateDisplay();
         };
         reader.readAsText(file);
       }
@@ -412,42 +377,19 @@
         a.download = "prog.asm";
         a.click();
       }
-      function loadCode() {
-        const f = fileInput.files[0];
-        if (!f) return;
-        const r = new FileReader();
-        r.onload = (e) => editor.setValue(e.target.result);
-        r.readAsText(f);
-      }
+      function loadCode() { const f=fileInput.files[0]; if(f){ const r=new FileReader(); r.onload=e=>editor.setValue(e.target.result); r.readAsText(f);} }
 
-      // CodeMirror & dictionary init
-      let editor = CodeMirror.fromTextArea(code, {
-        lineNumbers: true,
-        mode: "text/x-asm",
-        theme: "dracula",
-        gutters: ["CodeMirror-linenumbers", "breakpoints"],
-      });
-      editor.on("gutterClick", (cm, n) => {
-        let info = cm.lineInfo(n);
-        cm.setGutterMarker(
-          n,
-          "breakpoints",
-          info.gutterMarkers
-            ? null
-            : (() => (
-                (m = document.createElement("div")), (m.innerHTML = "●"), m
-              ))()
-        );
-        if (breakpoints.has(n)) breakpoints.delete(n);
-        else breakpoints.add(n);
-      });
+      let editor = CodeMirror.fromTextArea(code, { lineNumbers:true, mode:"text/x-asm", theme:"dracula", gutters:["CodeMirror-linenumbers","breakpoints"] });
+      editor.on("gutterClick",(cm,n)=>{let info=cm.lineInfo(n);cm.setGutterMarker(n,"breakpoints",info.gutterMarkers?null:(m=document.createElement("div"),m.innerHTML="●",m)); if(breakpoints.has(n)) breakpoints.delete(n);else breakpoints.add(n);});
 
       const instructionDescriptions = {
         MOV: "MOV A, B – Move value from B to A.",
         ADD: "ADD A, B – Add B to A.",
         SUB: "SUB A, B – Subtract B from A.",
         INC: "INC A – A = A + 1.",
-        DEC: "DEC A – A = A - 1.",
+        DEC: "DEC A – A - 1.",
+        MULT: "MULT A, B – Multiply A by B.",
+        DIV: "DIV A, B – Integer divide A by B.",
         PUSH: "PUSH A – Push A onto stack.",
         POP: "POP A – Pop stack into A.",
         LOAD: "LOAD A, 10 – A = memory[10].",
